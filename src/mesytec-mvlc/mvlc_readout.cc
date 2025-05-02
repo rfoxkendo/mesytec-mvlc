@@ -33,6 +33,8 @@ struct MVLCReadout::Private
     std::unique_ptr<ReadoutWorker> readoutWorker;
 
     ReadoutInitResults initResults;
+    ReadoutInitCallback initCallback;
+    void *initUserContext = nullptr;
 
     Private()
         : parserCounters()
@@ -69,10 +71,20 @@ std::error_code MVLCReadout::start(const std::chrono::seconds &timeToRun,
                                    const CommandExecOptions initSequenceOptions)
 
 {
-    d->initResults = init_readout(d->mvlc, d->crateConfig, initSequenceOptions);
+    d->initResults = init_readout(d->mvlc, d->crateConfig, initSequenceOptions, d->initCallback,
+                                  d->initUserContext);
 
     if (d->initResults.ec)
         return d->initResults.ec;
+
+    for (const auto &cmdResult: d->initResults.init)
+    {
+        if (cmdResult.ec)
+        {
+            std::cerr << fmt::format("  Error during DAQ init sequence: cmd={}, ec={}\n",
+                to_string(cmdResult.cmd), cmdResult.ec.message());
+        }
+    }
 
     if (d->lfh)
         listfile::listfile_write_preamble(*d->lfh, d->crateConfig);
@@ -115,6 +127,17 @@ bool MVLCReadout::finished()
 {
     return (d->readoutWorker->state() == ReadoutWorker::State::Idle
             && d->readoutWorker->snoopQueues()->filledBufferQueue().empty());
+}
+
+void MVLCReadout::setInitCallback(const ReadoutInitCallback &callback, void *userContext)
+{
+    d->initCallback = callback;
+    d->initUserContext = userContext;
+}
+
+ReadoutInitResults MVLCReadout::getInitResults() const
+{
+    return d->initResults;
 }
 
 ReadoutWorker::State MVLCReadout::workerState() const

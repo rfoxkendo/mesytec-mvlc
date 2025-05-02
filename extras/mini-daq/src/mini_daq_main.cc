@@ -478,12 +478,10 @@ int main(int argc, char *argv[])
         {
             if (opt_printReadoutData)
             {
-                std::cout
-                    << "SystemEvent: type=" << system_event_type_to_string(
-                        system_event::extract_subtype(*header))
-                    << ", size=" << size << ", bytes=" << (size * sizeof(u32))
-                    << endl;
-                fmt::print("system event: crateId={}, header={:08x}", crateId, *header);
+                fmt::print("SystemEvent: crateId={}, header=0x{:08x}, type={}, size={}, bytes={}\n",
+                     crateId, *header, system_event_type_to_string(system_event::extract_subtype(*header)),
+                        size, size * sizeof(u32)
+                );
             }
         };
 
@@ -491,18 +489,37 @@ int main(int argc, char *argv[])
         // readout object
         //
 
-        auto rdo = make_mvlc_readout(
-            mvlc,
-            crateConfig,
-            listfileParams,
-            parserCallbacks);
+        // This can be used to do custom initialization during the start
+        // sequence. See mvlc_readout_worker.h for how this works.
+        auto initCallback = [](void *userContext, const std::string &initStage, MVLC &mvlc,
+                                   const CrateConfig &crateConfig,
+                                   const CommandExecOptions &execOptions)
+        {
+            spdlog::trace("called with initStage={}, userContext={}", initStage, fmt::ptr(userContext));
+            return std::error_code();
+        };
+
+        auto rdo = make_mvlc_readout(mvlc, crateConfig, listfileParams, parserCallbacks);
+        rdo.setInitCallback(initCallback, reinterpret_cast<void *>(0x1337));
 
         spdlog::info("Starting readout. Running for {} seconds.", timeToRun.count());
 
-        if (auto ec = rdo.start(timeToRun))
+        if (auto ec = rdo.start(timeToRun, initOptions))
         {
             cerr << "Error starting readout: " << ec.message() << endl;
-            throw std::runtime_error("ReadoutWorker error");
+
+            auto initResults = rdo.getInitResults();
+
+            for (const auto &cmdResult: initResults.init)
+            {
+                if (cmdResult.ec)
+                {
+                    std::cerr << fmt::format("  Error during DAQ init sequence: cmd={}, ec={}\n",
+                        to_string(cmdResult.cmd), cmdResult.ec.message());
+                }
+            }
+
+            throw std::runtime_error("DAQ startup start error");
         }
 
         MiniDaqCountersUpdate counters;

@@ -30,6 +30,7 @@
 #include "util/logging.h"
 #include "util/string_util.h"
 #include "util/string_view.hpp"
+#include "mvlc_buffer_validators.h"
 #include "mvlc_eth_interface.h"
 
 using namespace mesytec::mvlc;
@@ -96,6 +97,14 @@ std::string decode_frame_header(u32 header)
         case frame_headers::SystemEvent:
             ss << "SystemEvent (len=" << headerInfo.len;
             break;
+
+        case frame_headers::SystemEvent2:
+            ss << "SystemEvent2 (len=" << headerInfo.len;
+            break;
+
+        default:
+            ss << "<unknown frame type>";
+            break;
     }
 
     switch (static_cast<frame_headers::FrameTypes>(headerInfo.type))
@@ -121,6 +130,7 @@ std::string decode_frame_header(u32 header)
             break;
 
         case frame_headers::SystemEvent:
+        case frame_headers::SystemEvent2:
             {
                 u16 subType = (header >> system_event::SubtypeShift) & system_event::SubtypeMask;
                 u16 ctrlId = (header >> system_event::CtrlIdShift) & system_event::CtrlIdMask;
@@ -134,17 +144,20 @@ std::string decode_frame_header(u32 header)
             break;
     }
 
-    if (static_cast<frame_headers::FrameTypes>(headerInfo.type) != frame_headers::SystemEvent)
+    if (is_known_frame_header(header))
     {
-        u8 frameFlags = (header >> frame_headers::FrameFlagsShift) & frame_headers::FrameFlagsMask;
-        ss << ", frameFlags=" << format_frame_flags(frameFlags) << ")";
-    }
-    else
-    {
-        if ((header >> system_event::ContinueShift) & system_event::ContinueMask)
-            ss << ", frameFlags=Continue" << ")";
+        if (static_cast<frame_headers::FrameTypes>(headerInfo.type) != frame_headers::SystemEvent)
+        {
+            u8 frameFlags = (header >> frame_headers::FrameFlagsShift) & frame_headers::FrameFlagsMask;
+            ss << ", frameFlags=" << format_frame_flags(frameFlags) << ")";
+        }
         else
-            ss << ", frameFlags=none" << ")";
+        {
+            if ((header >> system_event::ContinueShift) & system_event::ContinueMask)
+                ss << ", frameFlags=Continue" << ")";
+            else
+                ss << ", frameFlags=none" << ")";
+        }
     }
 
     return ss.str();
@@ -259,6 +272,22 @@ std::string trigger_to_string(const stacks::Trigger &trigger)
     }
 
     return result;
+}
+
+std::optional<int> MESYTEC_MVLC_EXPORT get_trigger_irq_value(const stacks::Trigger &trigger)
+{
+    if (trigger.type == stacks::TriggerType::IRQNoIACK
+        || trigger.type == stacks::TriggerType::IRQWithIACK)
+    {
+        return trigger.subtype + 1;
+    }
+
+    return {};
+}
+
+std::optional<int> MESYTEC_MVLC_EXPORT get_trigger_irq_value(const u16 triggerValue)
+{
+    return get_trigger_irq_value(stacks::Trigger{.value=triggerValue});
 }
 
 // Follows the framing structure inside the buffer until an incomplete frame
